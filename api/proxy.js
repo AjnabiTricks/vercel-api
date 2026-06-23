@@ -14,21 +14,42 @@ module.exports = async (req, res) => {
 
     const url = "https://rodb.pulse.gop.pk/registry_index_3/_msearch";
 
-    // ⚠️ MUST BE EXACT NDJSON FORMAT (2 BLOCKS ONLY)
-    const payload =
-`{"index":"registry_index_3"}
-{"query":{"bool":{"must":[
-{"term":{"TehsilId":{"value":"123"}}},
-{"nested":{
-  "path":"RegistryParties",
-  "query":{"bool":{"must":[
-    {"match":{"RegistryParties.CNIC":"${cnic}"}}
-  ]}}
-}}
-]}},"size":5}
-`;
+    // ⚠️ IMPORTANT: exact NDJSON format with final \n\n
+    const body = [
+      JSON.stringify({ index: "registry_index_3" }),
+      JSON.stringify({
+        query: {
+          bool: {
+            must: [
+              {
+                term: {
+                  "TehsilId": { value: "123" }
+                }
+              },
+              {
+                nested: {
+                  path: "RegistryParties",
+                  query: {
+                    bool: {
+                      must: [
+                        {
+                          match: {
+                            "RegistryParties.CNIC": cnic
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        size: 5
+      })
+    ].join("\n") + "\n\n";   // 🔥 THIS IS CRITICAL
 
-    const response = await axios.post(url, payload + "\n", {
+    const response = await axios.post(url, body, {
       timeout: 20000,
       headers: {
         "Content-Type": "application/x-ndjson",
@@ -38,7 +59,7 @@ module.exports = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      result: response.data
+      data: response.data
     });
 
   } catch (err) {
