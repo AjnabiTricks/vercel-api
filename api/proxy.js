@@ -4,11 +4,18 @@ module.exports = async (req, res) => {
 
   res.setHeader("Access-Control-Allow-Origin", "*");
 
-  const cnic = req.query.cnic;
+  try {
 
-  const url = "https://rodb.pulse.gop.pk/registry_index_3/_msearch";
+    const cnic = req.query.cnic;
 
-  const payload =
+    if (!cnic) {
+      return res.status(400).json({ error: "CNIC required" });
+    }
+
+    const url = "https://rodb.pulse.gop.pk/registry_index_3/_msearch";
+
+    // ⚠️ MUST BE STRING (NDJSON)
+    const payload =
 `{"index":"registry_index_3"}
 {"query":{"bool":{"must":[
 {"term":{"TehsilId":{"value":"123"}}},
@@ -21,7 +28,6 @@ module.exports = async (req, res) => {
 ]}},"size":5}
 `;
 
-  try {
     const response = await axios.post(url, payload + "\n", {
       headers: {
         "Content-Type": "application/x-ndjson",
@@ -29,9 +35,17 @@ module.exports = async (req, res) => {
       }
     });
 
-    res.status(200).json(response.data);
+    return res.status(200).json({
+      success: true,
+      data: response.data
+    });
 
-  } catch (e) {
-    res.status(500).json({ error: e.message });
+  } catch (error) {
+
+    // 🔥 IMPORTANT: show real error
+    return res.status(500).json({
+      error: error.message,
+      details: error.response?.data || null
+    });
   }
-};
+};};
