@@ -14,24 +14,38 @@ module.exports = async (req, res) => {
 
     const url = "https://rodb.pulse.gop.pk/registry_index_3/_msearch";
 
-    // 🚀 NO TEHSIL / DISTRICT FILTER — ONLY CNIC
-    const body =
-`{"index":"registry_index_3"}
-{"query":{"bool":{"must":[
-{
-  "nested": {
-    "path": "RegistryParties",
-    "query": {
-      "match": {
-        "RegistryParties.CNIC": "${cnic}"
-      }
-    }
-  }
-}
-]}},"size":50}
-`;
+    // ✅ SAFE NDJSON BUILD (NO STRING BREAK ISSUE)
+    const query = {
+      index: "registry_index_3"
+    };
 
-    const response = await axios.post(url, body + "\n", {
+    const bodyQuery = {
+      query: {
+        bool: {
+          must: [
+            {
+              nested: {
+                path: "RegistryParties",
+                query: {
+                  match: {
+                    "RegistryParties.CNIC": cnic
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      size: 50
+    };
+
+    const body =
+      JSON.stringify(query) +
+      "\n" +
+      JSON.stringify(bodyQuery) +
+      "\n";
+
+    const response = await axios.post(url, body, {
       timeout: 20000,
       headers: {
         "Content-Type": "application/x-ndjson",
