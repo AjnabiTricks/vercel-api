@@ -2,9 +2,9 @@ const axios = require("axios");
 
 module.exports = async (req, res) => {
 
-  try {
+  res.setHeader("Access-Control-Allow-Origin", "*");
 
-    res.setHeader("Access-Control-Allow-Origin", "*");
+  try {
 
     const cnic = req.query.cnic;
 
@@ -14,6 +14,7 @@ module.exports = async (req, res) => {
 
     const url = "https://rodb.pulse.gop.pk/registry_index_3/_msearch";
 
+    // ⚠️ MUST BE EXACT NDJSON FORMAT (2 BLOCKS ONLY)
     const payload =
 `{"index":"registry_index_3"}
 {"query":{"bool":{"must":[
@@ -27,32 +28,25 @@ module.exports = async (req, res) => {
 ]}},"size":5}
 `;
 
-    let response;
-
-    try {
-      response = await axios.post(url, payload + "\n", {
-        timeout: 15000,
-        headers: {
-          "Content-Type": "application/x-ndjson",
-          "Authorization": "Basic cmVhZF9vbmx5X3VzZXJfdjI6cmVhZG9ubHlfMTIz"
-        }
-      });
-    } catch (apiErr) {
-      return res.status(500).json({
-        error: "Upstream API failed",
-        message: apiErr.message
-      });
-    }
+    const response = await axios.post(url, payload + "\n", {
+      timeout: 20000,
+      headers: {
+        "Content-Type": "application/x-ndjson",
+        "Authorization": "Basic cmVhZF9vbmx5X3VzZXJfdjI6cmVhZG9ubHlfMTIz"
+      }
+    });
 
     return res.status(200).json({
       success: true,
-      data: response.data
+      result: response.data
     });
 
   } catch (err) {
+
     return res.status(500).json({
-      error: "Server crashed",
-      message: err.message
+      error: "Upstream API failed",
+      message: err.message,
+      details: err.response?.data || null
     });
   }
 };
