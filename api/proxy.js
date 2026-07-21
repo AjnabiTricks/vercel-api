@@ -30,26 +30,58 @@ module.exports = async (req, res) => {
       });
     }
 
-    // Optional filters (default from working curl)
+    // Optional filters
     const tehsilId = req.query.tehsilId || req.body?.tehsilId || "81";
     const fromDate = req.query.fromDate || req.body?.fromDate || "1947-08-14";
     const toDate = req.query.toDate || req.body?.toDate || "2026-07-20";
-    const size = req.query.size || req.body?.size || 5;
+    const size = parseInt(req.query.size || req.body?.size || 5);
 
-    const url = "https://rodb.pulse.gop.pk/registry_index_3/_msearch";
+    const url = "https://rodb.pulse.gop.pk/registry_index_3/_search";
 
-    // NDJSON body - exactly like your working curl
-    const ndjson = `
-{"index":"registry_index_3"}
-{"query":{"bool":{"must":[{"term":{"TehsilId":{"value":"${tehsilId}"}}},{"match":{"RegistryParties.CNIC":"${cleanCNIC}"}},{"range":{"RegistryDate":{"gte":"${fromDate}","lte":"${toDate}"}}}]}},"aggs":{"distinct_count":{"cardinality":{"field":"Id"}}},"size":0}
-{"index":"registry_index_3"}
-{"query":{"bool":{"must":[{"term":{"TehsilId":{"value":"${tehsilId}"}}},{"match":{"RegistryParties.CNIC":"${cleanCNIC}"}},{"range":{"RegistryDate":{"gte":"${fromDate}","lte":"${toDate}"}}}]}},"sort":[{"Id":{"order":"desc"}}],"_source":["Id","RegisteredNumber","MauzaName","RegistryDate"],"from":0,"size":"${size}"}
-`;
+    // Simple search query - matches your working request format
+    const requestBody = {
+      query: {
+        bool: {
+          must: [
+            {
+              term: {
+                "TehsilId": {
+                  value: tehsilId
+                }
+              }
+            },
+            {
+              match: {
+                "RegistryParties.CNIC": cleanCNIC
+              }
+            },
+            {
+              range: {
+                "RegistryDate": {
+                  gte: fromDate,
+                  lte: toDate
+                }
+              }
+            }
+          ]
+        }
+      },
+      sort: [
+        {
+          "Id": {
+            order: "desc"
+          }
+        }
+      ],
+      _source: ["Id", "RegisteredNumber", "MauzaName", "RegistryDate", "RegistryParties", "RegistryType", "Tehsil"],
+      from: 0,
+      size: size
+    };
 
-    const response = await axios.post(url, ndjson, {
+    const response = await axios.post(url, requestBody, {
       timeout: 30000,
       headers: {
-        "Content-Type": "application/x-ndjson",
+        "Content-Type": "application/json",
         "Authorization": "Basic cmVhZF9vbmx5X3VzZXJfdjI6cmVhZG9ubHlfMTIz",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/86.0.4240.198 Safari/537.36",
         "Accept": "*/*",
@@ -67,16 +99,8 @@ module.exports = async (req, res) => {
       }
     });
 
-    // Parse multi-response (2 responses)
-    const responses = response.data.split('\n')
-      .filter(line => line.trim())
-      .map(line => JSON.parse(line));
-
-    const aggResponse = responses[0] || {};
-    const dataResponse = responses[1] || {};
-
-    const total = aggResponse?.aggregations?.distinct_count?.value || 0;
-    const hits = dataResponse?.hits?.hits || [];
+    const hits = response.data?.hits?.hits || [];
+    const total = response.data?.hits?.total?.value || 0;
 
     return res.status(200).json({
       success: true,
