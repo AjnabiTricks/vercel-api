@@ -34,11 +34,11 @@ module.exports = async (req, res) => {
     const tehsilId = req.query.tehsilId || req.body?.tehsilId || "81";
     const fromDate = req.query.fromDate || req.body?.fromDate || "1947-08-14";
     const toDate = req.query.toDate || req.body?.toDate || "2026-07-20";
-    const size = parseInt(req.query.size || req.body?.size || 5);
+    const size = parseInt(req.query.size || req.body?.size || 50);
 
     const url = "https://rodb.pulse.gop.pk/registry_index_3/_search";
 
-    // Simple search query - matches your working request format
+    // Search query - returning ALL fields
     const requestBody = {
       query: {
         bool: {
@@ -73,7 +73,7 @@ module.exports = async (req, res) => {
           }
         }
       ],
-      _source: ["Id", "RegisteredNumber", "MauzaName", "RegistryDate", "RegistryParties", "RegistryType", "Tehsil"],
+      // Remove _source filter to get ALL fields
       from: 0,
       size: size
     };
