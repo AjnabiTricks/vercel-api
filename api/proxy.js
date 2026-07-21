@@ -23,7 +23,7 @@ module.exports = async (req, res) => {
       });
     }
 
-    // Remove all dashes and spaces
+    // Remove all dashes and spaces - ONLY NUMBERS
     const cleanCNIC = cnic.replace(/[-\s]/g, '');
     
     // Validate 13 digits
@@ -34,32 +34,16 @@ module.exports = async (req, res) => {
       });
     }
 
-    // Also create formatted version with dashes (just in case)
-    const formattedCNIC = cleanCNIC.replace(/(\d{5})(\d{7})(\d{1})/, '$1-$2-$3');
+    // Convert to number (since Id field is numeric)
+    const cnicNumber = parseInt(cleanCNIC, 10);
 
     const url = "https://rodb.pulse.gop.pk/registry_index_3/_search";
 
-    // Search both formats
+    // Search with numeric value only
     const requestBody = {
       query: {
-        bool: {
-          should: [
-            {
-              term: {
-                "Id": {
-                  value: cleanCNIC
-                }
-              }
-            },
-            {
-              term: {
-                "Id": {
-                  value: formattedCNIC
-                }
-              }
-            }
-          ],
-          minimum_should_match: 1
+        term: {
+          "Id": cnicNumber
         }
       },
       size: 50
