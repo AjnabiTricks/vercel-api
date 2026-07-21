@@ -34,16 +34,33 @@ module.exports = async (req, res) => {
       });
     }
 
-    // Convert to number (since Id field is numeric)
+    // Convert to number (for Id field)
     const cnicNumber = parseInt(cleanCNIC, 10);
 
     const url = "https://rodb.pulse.gop.pk/registry_index_3/_search";
 
-    // Search with numeric value only
+    // Search in BOTH Id AND RegistryParties.CNIC
     const requestBody = {
       query: {
-        term: {
-          "Id": cnicNumber
+        bool: {
+          should: [
+            {
+              term: {
+                "Id": cnicNumber
+              }
+            },
+            {
+              nested: {
+                path: "RegistryParties",
+                query: {
+                  term: {
+                    "RegistryParties.CNIC": cleanCNIC
+                  }
+                }
+              }
+            }
+          ],
+          minimum_should_match: 1
         }
       },
       size: 50
