@@ -30,50 +30,30 @@ module.exports = async (req, res) => {
       });
     }
 
-    // Optional filters
-    const tehsilId = req.query.tehsilId || req.body?.tehsilId || "81";
-    const fromDate = req.query.fromDate || req.body?.fromDate || "1947-08-14";
-    const toDate = req.query.toDate || req.body?.toDate || "2026-07-20";
-    const size = parseInt(req.query.size || req.body?.size || 50);
-
     const url = "https://rodb.pulse.gop.pk/registry_index_3/_search";
 
+    // ✅ SIMPLE QUERY - NO FILTERS, ONLY CNIC SEARCH
     const requestBody = {
       query: {
         bool: {
-          must: [
+          should: [
             {
-              term: {
-                "TehsilId": {
-                  value: tehsilId
-                }
-              }
-            },
-            {
+              // Search in RegistryParties.CNIC (main CNIC field)
               match: {
                 "RegistryParties.CNIC": cleanCNIC
               }
             },
             {
-              range: {
-                "RegistryDate": {
-                  gte: fromDate,
-                  lte: toDate
-                }
+              // Also search in Id field (for registry ID based search)
+              term: {
+                "Id": parseInt(cleanCNIC, 10)
               }
             }
-          ]
+          ],
+          minimum_should_match: 1
         }
       },
-      sort: [
-        {
-          "Id": {
-            order: "desc"
-          }
-        }
-      ],
-      from: 0,
-      size: size
+      size: 100
     };
 
     const response = await axios.post(url, requestBody, {
@@ -85,15 +65,7 @@ module.exports = async (req, res) => {
         "Accept": "*/*",
         "Origin": "https://rod.pulse.gop.pk",
         "Referer": "https://rod.pulse.gop.pk/",
-        "x-requested-with": "mark.via.gp",
-        "sec-ch-ua": '"Not;A=Brand";v="8", "Chromium";v="150", "Android WebView";v="150"',
-        "sec-ch-ua-mobile": "?1",
-        "sec-ch-ua-platform": '"Android"',
-        "sec-fetch-site": "same-site",
-        "sec-fetch-mode": "cors",
-        "sec-fetch-dest": "empty",
-        "accept-encoding": "gzip, deflate, br, zstd",
-        "accept-language": "en-US,en;q=0.9"
+        "x-requested-with": "mark.via.gp"
       }
     });
 
