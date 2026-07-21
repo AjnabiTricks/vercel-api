@@ -38,7 +38,6 @@ module.exports = async (req, res) => {
 
     const url = "https://rodb.pulse.gop.pk/registry_index_3/_search";
 
-    // Search query - returning ALL fields
     const requestBody = {
       query: {
         bool: {
@@ -73,7 +72,6 @@ module.exports = async (req, res) => {
           }
         }
       ],
-      // Remove _source filter to get ALL fields
       from: 0,
       size: size
     };
