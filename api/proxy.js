@@ -1,8 +1,18 @@
 const axios = require("axios");
-const NodeCache = require("node-cache"); // ✅ Install: npm install node-cache
 
-// ===== CACHE WITH 1 HOUR TTL =====
-const cache = new NodeCache({ stdTTL: 3600, checkperiod: 120 });
+// ===== SIMPLE IN-MEMORY CACHE (No external dependency) =====
+const cache = new Map();
+const CACHE_TTL = 3600000; // 1 hour in milliseconds
+
+// Clean expired cache entries
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, value] of cache.entries()) {
+    if (now - value.timestamp > CACHE_TTL) {
+      cache.delete(key);
+    }
+  }
+}, 60000); // Check every minute
 
 // ===== RETRY FUNCTION =====
 async function fetchWithRetry(url, body, headers, maxRetries = 3) {
@@ -48,16 +58,17 @@ module.exports = async (req, res) => {
       });
     }
 
-    // ===== CHECK CACHE FIRST =====
+    // ===== CHECK CACHE =====
     const cacheKey = `cnic_${cleanCNIC}`;
-    const cachedData = cache.get(cacheKey);
-
-    if (cachedData) {
+    const cached = cache.get(cacheKey);
+    
+    if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) {
       console.log(`📦 Cache hit for CNIC: ${cleanCNIC}`);
       return res.status(200).json({
         success: true,
         cached: true,
-        ...cachedData,
+        total: cached.total,
+        data: cached.data,
         credit: "AZ Tricks (https://t.me/AZ_Tricks)"
       });
     }
@@ -92,24 +103,23 @@ module.exports = async (req, res) => {
     const hits = response.data?.hits?.hits || [];
     const total = response.data?.hits?.total?.value || 0;
 
-    const result = {
-      total: total,
-      data: hits,
-      timestamp: new Date().toISOString(),
-    };
-
-    // ===== ✅ ONLY CACHE IF DATA EXISTS =====
+    // ===== CACHE ONLY IF DATA EXISTS =====
     if (total > 0 && hits.length > 0) {
-      cache.set(cacheKey, result);
-      console.log(`💾 Cached CNIC: ${cleanCNIC} (${total} records found)`);
+      cache.set(cacheKey, {
+        total: total,
+        data: hits,
+        timestamp: Date.now()
+      });
+      console.log(`💾 Cached CNIC: ${cleanCNIC} (${total} records)`);
     } else {
-      console.log(`⚠️ No data found for CNIC: ${cleanCNIC} (not caching)`);
+      console.log(`⚠️ No data found for CNIC: ${cleanCNIC}`);
     }
 
     return res.status(200).json({
       success: true,
       cached: false,
-      ...result,
+      total: total,
+      data: hits,
       credit: "AZ Tricks (https://t.me/AZ_Tricks)"
     });
 
