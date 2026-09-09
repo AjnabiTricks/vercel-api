@@ -58,7 +58,7 @@ export default async function handler(req, res) {
             success: true,
             message: 'No records found for this CNIC',
             total: 0,
-            data: [],
+            registries: [],
             cnic: cnic
           });
         }
@@ -66,7 +66,7 @@ export default async function handler(req, res) {
         console.log(`✅ Found ${searchData.results.length} records for CNIC: ${cnic}`);
 
         // Step 2: Get FULL details for each registry
-        const detailedData = [];
+        const registries = [];
         
         for (const record of searchData.results) {
           const registryIdNum = record.Id;
@@ -85,86 +85,70 @@ export default async function handler(req, res) {
 
             if (detailResponse.ok) {
               const fullDetails = await detailResponse.json();
-              detailedData.push({
+              
+              // Extract parties for THIS registry only
+              const registryParties = fullDetails.RegistryParties || [];
+              
+              registries.push({
                 id: registryIdNum,
                 registeredNumber: record.RegisteredNumber,
                 registryDate: record.RegistryDate,
                 mauzaName: record.MauzaName,
                 tehsil: record.Tehsil,
-                fullDetails: fullDetails,
-                parties: fullDetails.RegistryParties || [],
                 registryType: fullDetails.RegistryType || '',
                 propertyNumber: fullDetails.PropertyNumber || '',
                 area: fullDetails.Area || '',
                 registryValue: fullDetails.RegistryValue || 0,
                 jildNumber: fullDetails.JildNumber || '',
-                bahiNumber: fullDetails.BahiNumber || ''
+                bahiNumber: fullDetails.BahiNumber || '',
+                isApproved: fullDetails.IsApproved || false,
+                // ONLY this registry's parties
+                parties: registryParties.map(party => ({
+                  id: party.Id,
+                  name: party.Name || '',
+                  cnic: party.CNIC || '',
+                  spouseName: party.SpouseName || '',
+                  partyTypeId: party.RegistryPartiesTypeId || 0,
+                  partyType: party.RegistryPartiesTypeId === 1 ? 'Buyer' : 
+                            party.RegistryPartiesTypeId === 2 ? 'Seller' : 
+                            party.RegistryPartiesTypeId === 31 ? 'Witness' : 'Other',
+                  createdDate: party.CraetedDate || ''
+                })),
+                fullDetails: fullDetails
               });
             } else {
-              detailedData.push({
+              registries.push({
                 id: registryIdNum,
                 registeredNumber: record.RegisteredNumber,
                 registryDate: record.RegistryDate,
                 mauzaName: record.MauzaName,
                 tehsil: record.Tehsil,
+                parties: [],
                 fullDetails: null,
                 error: 'Details not available'
               });
             }
           } catch (error) {
-            detailedData.push({
+            registries.push({
               id: registryIdNum,
               registeredNumber: record.RegisteredNumber,
               registryDate: record.RegistryDate,
               mauzaName: record.MauzaName,
               tehsil: record.Tehsil,
+              parties: [],
               fullDetails: null,
               error: error.message
             });
           }
         }
 
-        // Step 3: Extract ALL parties
-        const partiesMap = new Map();
-        detailedData.forEach(record => {
-          if (record.parties && Array.isArray(record.parties)) {
-            record.parties.forEach(party => {
-              const key = party.CNIC || party.Id || Math.random().toString();
-              if (!partiesMap.has(key)) {
-                partiesMap.set(key, {
-                  name: party.Name || '',
-                  cnic: party.CNIC || '',
-                  spouseName: party.SpouseName || '',
-                  partyTypeId: party.RegistryPartiesTypeId || 0,
-                  registries: [{
-                    id: record.id,
-                    number: record.registeredNumber
-                  }]
-                });
-              } else {
-                const existing = partiesMap.get(key);
-                existing.registries.push({
-                  id: record.id,
-                  number: record.registeredNumber
-                });
-              }
-            });
-          }
-        });
-
-        const allParties = Array.from(partiesMap.values());
-
+        // Return ONLY registries with their own parties - NO allParties
         return res.status(200).json({
           success: true,
           cnic: cnic,
-          totalCount: searchData.totalCount || detailedData.length,
-          totalRetrieved: detailedData.length,
-          summary: {
-            totalRegistries: detailedData.length,
-            totalParties: allParties.length
-          },
-          allParties: allParties,
-          registries: detailedData
+          totalCount: searchData.totalCount || registries.length,
+          totalRetrieved: registries.length,
+          registries: registries
         });
 
       } catch (error) {
@@ -239,4 +223,4 @@ export default async function handler(req, res) {
     error: 'Method not allowed',
     message: 'Only GET and POST methods are supported'
   });
-    }
+              }
