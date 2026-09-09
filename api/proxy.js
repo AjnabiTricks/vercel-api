@@ -9,19 +9,26 @@ export default async function handler(req, res) {
     'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
   );
 
-  // Handle preflight OPTIONS request
   if (req.method === 'OPTIONS') {
     res.status(200).end();
     return;
   }
 
-  // Handle POST request - CNIC search
+  // Handle POST request - CNIC search with full details
   if (req.method === 'POST') {
     try {
       const cnic = req.body.partiesCnic;
+      
+      if (!cnic) {
+        return res.status(400).json({
+          success: false,
+          error: 'CNIC is required'
+        });
+      }
+
       console.log(`🔍 Searching CNIC: ${cnic}`);
 
-      // Step 1: Search by CNIC
+      // Step 1: Search by CNIC - Get ALL records
       const searchResponse = await fetch('https://rod.pulse.gop.pk/api/elasticsearch/registries/search', {
         method: 'POST',
         headers: {
@@ -40,106 +47,199 @@ export default async function handler(req, res) {
           registeredNumber: null,
           registryYear: null,
           page: 1,
-          itemsPerPage: 100
+          itemsPerPage: 100 // Get ALL records
         }),
       });
 
+      if (!searchResponse.ok) {
+        throw new Error(`Search API error: ${searchResponse.status}`);
+      }
+
       const searchData = await searchResponse.json();
 
-      if (!searchData.data || searchData.data.length === 0) {
+      if (!searchData.results || searchData.results.length === 0) {
         return res.status(200).json({
           success: true,
-          message: 'No records found',
+          message: 'No records found for this CNIC',
+          total: 0,
           data: [],
-          total: 0
+          cnic: cnic
         });
       }
 
-      console.log(`✅ Found ${searchData.data.length} records`);
+      console.log(`✅ Found ${searchData.results.length} records for CNIC: ${cnic}`);
+      console.log(`📊 Total count: ${searchData.totalCount}`);
 
-      // Step 2: Get full details for each registry
+      // Step 2: Get FULL details for each registry
       const detailedData = [];
-      for (const record of searchData.data) {
-        const registryNumber = record.registryNumber || record.registry_number;
-        if (registryNumber) {
-          try {
-            const detailResponse = await fetch(`https://rod.pulse.gop.pk/api/elasticsearch/registry/${registryNumber}`, {
-              method: 'GET',
-              headers: {
-                'Accept': 'application/json',
-                'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36',
-                'Accept-Language': 'ur,en-US;q=0.9,en;q=0.8,ps;q=0.7',
-                'Origin': 'https://rod.pulse.gop.pk',
-                'Referer': `https://rod.pulse.gop.pk/details_page.html?I=${registryNumber}`,
-              },
-            });
+      
+      for (const record of searchData.results) {
+        const registryId = record.Id;
+        const registeredNumber = record.RegisteredNumber;
+        
+        console.log(`📥 Fetching details for registry ID: ${registryId}, Number: ${registeredNumber}`);
 
-            if (detailResponse.ok) {
-              const detailData = await detailResponse.json();
-              detailedData.push({
-                ...record,
-                fullDetails: detailData
-              });
-            } else {
-              detailedData.push({
-                ...record,
-                fullDetails: null,
-                error: 'Details not available'
-              });
-            }
-          } catch (error) {
+        try {
+          // Fetch complete registry details
+          const detailResponse = await fetch(`https://rod.pulse.gop.pk/api/elasticsearch/registry/${registryId}`, {
+            method: 'GET',
+            headers: {
+              'Accept': 'application/json',
+              'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36',
+              'Accept-Language': 'ur,en-US;q=0.9,en;q=0.8,ps;q=0.7',
+              'Origin': 'https://rod.pulse.gop.pk',
+              'Referer': `https://rod.pulse.gop.pk/details_page.html?I=${registryId}`,
+            },
+          });
+
+          if (detailResponse.ok) {
+            const fullDetails = await detailResponse.json();
             detailedData.push({
-              ...record,
+              id: registryId,
+              registeredNumber: registeredNumber,
+              searchResult: record,
+              fullDetails: fullDetails,
+              parties: fullDetails.RegistryParties || [],
+              registryType: fullDetails.RegistryType || '',
+              registryDate: fullDetails.RegistryDate || record.RegistryDate,
+              mauzaName: fullDetails.MauzaName || record.MauzaName,
+              tehsil: fullDetails.Tehsil || record.Tehsil,
+              propertyNumber: fullDetails.PropertyNumber || '',
+              area: fullDetails.Area || '',
+              registryValue: fullDetails.RegistryValue || 0
+            });
+          } else {
+            console.warn(`⚠️ Failed to fetch details for registry ${registryId}: ${detailResponse.status}`);
+            detailedData.push({
+              id: registryId,
+              registeredNumber: registeredNumber,
+              searchResult: record,
               fullDetails: null,
-              error: error.message
+              error: `Details not available (Status: ${detailResponse.status})`
             });
           }
+        } catch (error) {
+          console.error(`❌ Error fetching registry ${registryId}:`, error.message);
+          detailedData.push({
+            id: registryId,
+            registeredNumber: registeredNumber,
+            searchResult: record,
+            fullDetails: null,
+            error: error.message
+          });
         }
       }
 
-      // Return complete response
+      // Step 3: Extract ALL parties information
+      const allParties = [];
+      const partiesMap = new Map();
+
+      detailedData.forEach(record => {
+        if (record.parties && Array.isArray(record.parties)) {
+          record.parties.forEach(party => {
+            const key = party.CNIC || party.Id || Math.random().toString();
+            if (!partiesMap.has(key)) {
+              partiesMap.set(key, {
+                name: party.Name || '',
+                cnic: party.CNIC || '',
+                spouseName: party.SpouseName || '',
+                partyTypeId: party.RegistryPartiesTypeId || 0,
+                registries: [{
+                  id: record.id,
+                  number: record.registeredNumber,
+                  role: party.RegistryPartiesTypeId === 1 ? 'Buyer' : 
+                        party.RegistryPartiesTypeId === 2 ? 'Seller' : 
+                        party.RegistryPartiesTypeId === 31 ? 'Witness' : 'Other'
+                }]
+              });
+            } else {
+              const existing = partiesMap.get(key);
+              existing.registries.push({
+                id: record.id,
+                number: record.registeredNumber,
+                role: party.RegistryPartiesTypeId === 1 ? 'Buyer' : 
+                      party.RegistryPartiesTypeId === 2 ? 'Seller' : 
+                      party.RegistryPartiesTypeId === 31 ? 'Witness' : 'Other'
+              });
+            }
+          });
+        }
+      });
+
+      allParties.push(...partiesMap.values());
+
+      // Return COMPLETE response with all details
       return res.status(200).json({
         success: true,
-        total: detailedData.length,
-        data: detailedData,
-        cnic: cnic
+        cnic: cnic,
+        totalCount: searchData.totalCount || detailedData.length,
+        totalRetrieved: detailedData.length,
+        summary: {
+          totalRegistries: detailedData.length,
+          totalParties: allParties.length,
+          uniqueParties: allParties.length
+        },
+        allParties: allParties,
+        registries: detailedData
       });
 
     } catch (error) {
-      console.error('Error:', error);
+      console.error('❌ Proxy error:', error);
       return res.status(500).json({
         success: false,
-        error: error.message
+        error: error.message,
+        message: 'Failed to fetch registry details'
       });
     }
   }
 
   // Handle GET request for single registry
   if (req.method === 'GET') {
-    const registryNumber = req.query.registryNumber || req.query.I;
-    if (!registryNumber) {
-      return res.status(400).json({ error: 'Registry number required' });
+    const registryId = req.query.I || req.query.id || req.query.registryNumber;
+    
+    if (!registryId) {
+      return res.status(400).json({ 
+        error: 'Registry ID required',
+        message: 'Please provide I, id, or registryNumber parameter'
+      });
     }
 
     try {
-      const response = await fetch(`https://rod.pulse.gop.pk/api/elasticsearch/registry/${registryNumber}`, {
+      console.log(`📥 Fetching single registry: ${registryId}`);
+      
+      const response = await fetch(`https://rod.pulse.gop.pk/api/elasticsearch/registry/${registryId}`, {
         method: 'GET',
         headers: {
           'Accept': 'application/json',
           'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36',
           'Accept-Language': 'ur,en-US;q=0.9,en;q=0.8,ps;q=0.7',
           'Origin': 'https://rod.pulse.gop.pk',
-          'Referer': `https://rod.pulse.gop.pk/details_page.html?I=${registryNumber}`,
+          'Referer': `https://rod.pulse.gop.pk/details_page.html?I=${registryId}`,
         },
       });
 
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status}`);
+      }
+
       const data = await response.json();
-      return res.status(response.status).json(data);
+      return res.status(200).json({
+        success: true,
+        registryId: registryId,
+        data: data
+      });
+      
     } catch (error) {
-      console.error('Error:', error);
-      return res.status(500).json({ error: error.message });
+      console.error('❌ Error fetching registry:', error);
+      return res.status(500).json({ 
+        success: false,
+        error: error.message 
+      });
     }
   }
 
-  res.status(404).json({ error: 'Not found' });
-        }
+  res.status(405).json({ 
+    error: 'Method not allowed',
+    message: 'Only GET and POST methods are supported'
+  });
+      }
