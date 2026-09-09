@@ -14,21 +14,22 @@ export default async function handler(req, res) {
     return;
   }
 
-  // Handle POST request - CNIC search with full details
+  // Handle POST request - Search by CNIC
   if (req.method === 'POST') {
     try {
-      const cnic = req.body.partiesCnic;
+      // Support both 'cnic' and 'partiesCnic' parameter names
+      const cnic = req.body.cnic || req.body.partiesCnic;
       
       if (!cnic) {
         return res.status(400).json({
           success: false,
-          error: 'CNIC is required'
+          error: 'CNIC is required. Please provide "cnic" or "partiesCnic" in request body.'
         });
       }
 
       console.log(`🔍 Searching CNIC: ${cnic}`);
 
-      // Step 1: Search by CNIC - Get ALL records
+      // Step 1: Search by CNIC
       const searchResponse = await fetch('https://rod.pulse.gop.pk/api/elasticsearch/registries/search', {
         method: 'POST',
         headers: {
@@ -46,8 +47,8 @@ export default async function handler(req, res) {
           partiesCnic: cnic,
           registeredNumber: null,
           registryYear: null,
-          page: 1,
-          itemsPerPage: 100 // Get ALL records
+          page: req.body.page || 1,
+          itemsPerPage: req.body.itemsPerPage || 100
         }),
       });
 
@@ -77,10 +78,9 @@ export default async function handler(req, res) {
         const registryId = record.Id;
         const registeredNumber = record.RegisteredNumber;
         
-        console.log(`📥 Fetching details for registry ID: ${registryId}, Number: ${registeredNumber}`);
+        console.log(`📥 Fetching details for registry ID: ${registryId}`);
 
         try {
-          // Fetch complete registry details
           const detailResponse = await fetch(`https://rod.pulse.gop.pk/api/elasticsearch/registry/${registryId}`, {
             method: 'GET',
             headers: {
@@ -97,25 +97,29 @@ export default async function handler(req, res) {
             detailedData.push({
               id: registryId,
               registeredNumber: registeredNumber,
-              searchResult: record,
+              registryDate: record.RegistryDate,
+              mauzaName: record.MauzaName,
+              tehsil: record.Tehsil,
               fullDetails: fullDetails,
               parties: fullDetails.RegistryParties || [],
               registryType: fullDetails.RegistryType || '',
-              registryDate: fullDetails.RegistryDate || record.RegistryDate,
-              mauzaName: fullDetails.MauzaName || record.MauzaName,
-              tehsil: fullDetails.Tehsil || record.Tehsil,
               propertyNumber: fullDetails.PropertyNumber || '',
               area: fullDetails.Area || '',
-              registryValue: fullDetails.RegistryValue || 0
+              registryValue: fullDetails.RegistryValue || 0,
+              jildNumber: fullDetails.JildNumber || '',
+              bahiNumber: fullDetails.BahiNumber || '',
+              isApproved: fullDetails.IsApproved || false
             });
           } else {
-            console.warn(`⚠️ Failed to fetch details for registry ${registryId}: ${detailResponse.status}`);
+            console.warn(`⚠️ Failed to fetch details for registry ${registryId}`);
             detailedData.push({
               id: registryId,
               registeredNumber: registeredNumber,
-              searchResult: record,
+              registryDate: record.RegistryDate,
+              mauzaName: record.MauzaName,
+              tehsil: record.Tehsil,
               fullDetails: null,
-              error: `Details not available (Status: ${detailResponse.status})`
+              error: `Details not available`
             });
           }
         } catch (error) {
@@ -123,17 +127,17 @@ export default async function handler(req, res) {
           detailedData.push({
             id: registryId,
             registeredNumber: registeredNumber,
-            searchResult: record,
+            registryDate: record.RegistryDate,
+            mauzaName: record.MauzaName,
+            tehsil: record.Tehsil,
             fullDetails: null,
             error: error.message
           });
         }
       }
 
-      // Step 3: Extract ALL parties information
-      const allParties = [];
+      // Step 3: Extract ALL parties
       const partiesMap = new Map();
-
       detailedData.forEach(record => {
         if (record.parties && Array.isArray(record.parties)) {
           record.parties.forEach(party => {
@@ -166,9 +170,9 @@ export default async function handler(req, res) {
         }
       });
 
-      allParties.push(...partiesMap.values());
+      const allParties = Array.from(partiesMap.values());
 
-      // Return COMPLETE response with all details
+      // Return COMPLETE response
       return res.status(200).json({
         success: true,
         cnic: cnic,
@@ -242,4 +246,4 @@ export default async function handler(req, res) {
     error: 'Method not allowed',
     message: 'Only GET and POST methods are supported'
   });
-      }
+                }
