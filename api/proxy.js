@@ -1,153 +1,188 @@
-const axios = require("axios");
+// api/proxy.js
+export default async function handler(req, res) {
+  // Set CORS headers
+  res.setHeader('Access-Control-Allow-Credentials', true);
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
+  );
 
-// ===== SIMPLE IN-MEMORY CACHE (No external dependency) =====
-const cache = new Map();
-const CACHE_TTL = 3600000; // 1 hour in milliseconds
-
-// Clean expired cache entries
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, value] of cache.entries()) {
-    if (now - value.timestamp > CACHE_TTL) {
-      cache.delete(key);
-    }
+  if (req.method === 'OPTIONS') {
+    res.status(200).end();
+    return;
   }
-}, 60000); // Check every minute
 
-// ===== RETRY FUNCTION =====
-async function fetchWithRetry(url, body, headers, maxRetries = 3) {
-  for (let i = 0; i < maxRetries; i++) {
+  // Handle search by CNIC
+  if (req.method === 'POST' && req.body.partiesCnic) {
     try {
-      return await axios.post(url, body, {
-        timeout: 9000,
-        headers,
+      const cnic = req.body.partiesCnic;
+      console.log(`Searching for CNIC: ${cnic}`);
+      
+      // Step 1: Search for registries by CNIC
+      const searchResponse = await fetch('https://rod.pulse.gop.pk/api/elasticsearch/registries/search', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
+          'Accept-Language': 'ur,en-US;q=0.9,en;q=0.8',
+          'Origin': 'https://rod.pulse.gop.pk',
+          'Referer': 'https://rod.pulse.gop.pk/index.html',
+        },
+        body: JSON.stringify({
+          tehsilId: req.body.tehsilId || 99,
+          districtTehsilIds: null,
+          partiesName: null,
+          partiesCnic: cnic,
+          registeredNumber: null,
+          registryYear: null,
+          page: 1,
+          itemsPerPage: 50 // Get more results
+        }),
       });
-    } catch (err) {
-      if (i === maxRetries - 1) throw err;
-      console.log(`Retry ${i + 1}/${maxRetries}`);
-      await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
+
+      if (!searchResponse.ok) {
+        throw new Error(`Search API failed: ${searchResponse.status}`);
+      }
+
+      const searchData = await searchResponse.json();
+      
+      // Check if we have results
+      if (!searchData.data || searchData.data.length === 0) {
+        return res.status(200).json({
+          success: true,
+          message: 'No records found for this CNIC',
+          data: [],
+          total: 0
+        });
+      }
+
+      console.log(`Found ${searchData.data.length} records for CNIC: ${cnic}`);
+
+      // Step 2: Fetch full details for each registry
+      const fullDetailsPromises = searchData.data.map(async (record) => {
+        try {
+          const registryNumber = record.registryNumber || record.registry_number;
+          if (!registryNumber) return null;
+
+          const detailResponse = await fetch(`https://rod.pulse.gop.pk/api/elasticsearch/registry/${registryNumber}`, {
+            method: 'GET',
+            headers: {
+              'Accept': 'application/json',
+              'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
+              'Accept-Language': 'ur,en-US;q=0.9,en;q=0.8',
+              'Origin': 'https://rod.pulse.gop.pk',
+              'Referer': `https://rod.pulse.gop.pk/details_page.html?I=${registryNumber}`,
+            },
+          });
+
+          if (!detailResponse.ok) {
+            console.warn(`Failed to fetch details for registry ${registryNumber}: ${detailResponse.status}`);
+            return {
+              ...record,
+              details: null,
+              error: 'Details not available'
+            };
+          }
+
+          const detailData = await detailResponse.json();
+          return {
+            ...record,
+            details: detailData,
+            registryNumber: registryNumber
+          };
+        } catch (error) {
+          console.error(`Error fetching details for registry:`, error);
+          return {
+            ...record,
+            details: null,
+            error: error.message
+          };
+        }
+      });
+
+      // Wait for all detail fetches to complete
+      const fullResults = await Promise.all(fullDetailsPromises);
+      
+      // Filter out null results
+      const validResults = fullResults.filter(result => result !== null);
+
+      // Step 3: Get all party details (if there are multiple parties)
+      const allPartiesData = await getAllPartiesDetails(cnic);
+
+      res.status(200).json({
+        success: true,
+        total: validResults.length,
+        data: validResults,
+        allParties: allPartiesData,
+        cnic: cnic
+      });
+
+    } catch (error) {
+      console.error('Proxy error:', error);
+      res.status(500).json({
+        success: false,
+        error: error.message,
+        message: 'Failed to fetch registry details'
+      });
     }
+    return;
   }
+
+  // Handle simple GET request for single registry
+  if (req.method === 'GET') {
+    const registryNumber = req.query.registryNumber || req.query.I;
+    if (!registryNumber) {
+      return res.status(400).json({ error: 'Registry number required' });
+    }
+
+    try {
+      const response = await fetch(`https://rod.pulse.gop.pk/api/elasticsearch/registry/${registryNumber}`, {
+        method: 'GET',
+        headers: {
+          'Accept': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
+          'Accept-Language': 'ur,en-US;q=0.9,en;q=0.8',
+          'Origin': 'https://rod.pulse.gop.pk',
+          'Referer': `https://rod.pulse.gop.pk/details_page.html?I=${registryNumber}`,
+        },
+      });
+
+      const data = await response.json();
+      res.status(response.status).json(data);
+    } catch (error) {
+      console.error('Error fetching registry:', error);
+      res.status(500).json({ error: error.message });
+    }
+    return;
+  }
+
+  // Default response
+  res.status(404).json({ error: 'Not found' });
 }
 
-module.exports = async (req, res) => {
-  // CORS
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-
-  if (req.method === "OPTIONS") {
-    return res.status(200).end();
-  }
-
+// Helper function to get all party details for a CNIC
+async function getAllPartiesDetails(cnic) {
   try {
-    const cnic = req.query.cnic || req.body?.cnic;
-
-    if (!cnic) {
-      return res.status(400).json({
-        success: false,
-        error: "CNIC is required"
-      });
-    }
-
-    const cleanCNIC = cnic.replace(/[-\s]/g, '');
-    if (!/^\d{13}$/.test(cleanCNIC)) {
-      return res.status(400).json({
-        success: false,
-        error: "Invalid CNIC format. Must be 13 digits"
-      });
-    }
-
-    // ===== CHECK CACHE =====
-    const cacheKey = `cnic_${cleanCNIC}`;
-    const cached = cache.get(cacheKey);
-    
-    if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) {
-      console.log(`📦 Cache hit for CNIC: ${cleanCNIC}`);
-      return res.status(200).json({
-        success: true,
-        cached: true,
-        total: cached.total,
-        data: cached.data,
-        credit: "AZ Tricks (https://t.me/AZ_Tricks)"
-      });
-    }
-
-    console.log(`🔍 Cache miss for CNIC: ${cleanCNIC}`);
-
-    const url = "https://rodb.pulse.gop.pk/registry_index_3/_search";
-
-    const requestBody = {
-      query: {
-        bool: {
-          should: [
-            { match: { "RegistryParties.CNIC": cleanCNIC } },
-            { term: { "Id": parseInt(cleanCNIC, 10) } }
-          ],
-          minimum_should_match: 1
-        }
+    // This could be extended to fetch parties information
+    // You might need to call another API endpoint if available
+    const response = await fetch(`https://rod.pulse.gop.pk/api/parties/search?cnic=${cnic}`, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
+        'Origin': 'https://rod.pulse.gop.pk',
       },
-      size: 100
-    };
-
-    const response = await fetchWithRetry(url, requestBody, {
-      "Content-Type": "application/json",
-      "Authorization": "Basic cmVhZF9vbmx5X3VzZXJfdjI6cmVhZG9ubHlfMTIz",
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-      "Accept": "*/*",
-      "Origin": "https://rod.pulse.gop.pk",
-      "Referer": "https://rod.pulse.gop.pk/",
-      "x-requested-with": "mark.via.gp"
     });
 
-    const hits = response.data?.hits?.hits || [];
-    const total = response.data?.hits?.total?.value || 0;
-
-    // ===== CACHE ONLY IF DATA EXISTS =====
-    if (total > 0 && hits.length > 0) {
-      cache.set(cacheKey, {
-        total: total,
-        data: hits,
-        timestamp: Date.now()
-      });
-      console.log(`💾 Cached CNIC: ${cleanCNIC} (${total} records)`);
-    } else {
-      console.log(`⚠️ No data found for CNIC: ${cleanCNIC}`);
+    if (response.ok) {
+      return await response.json();
     }
-
-    return res.status(200).json({
-      success: true,
-      cached: false,
-      total: total,
-      data: hits,
-      credit: "AZ Tricks (https://t.me/AZ_Tricks)"
-    });
-
-  } catch (err) {
-    console.error("API Error:", err.message);
-
-    let errorMessage = "Upstream API failed";
-    let details = null;
-
-    if (err.response) {
-      details = {
-        status: err.response.status,
-        data: err.response.data
-      };
-      errorMessage = `API returned ${err.response.status}`;
-    } else if (err.request) {
-      details = {
-        message: "No response received from upstream API"
-      };
-      errorMessage = "Upstream API timeout or unreachable";
-    }
-
-    return res.status(500).json({
-      success: false,
-      error: errorMessage,
-      details: details,
-      message: err.message,
-      credit: "AZ Tricks (https://t.me/AZ_Tricks)"
-    });
+    return null;
+  } catch (error) {
+    console.warn('Could not fetch parties details:', error.message);
+    return null;
   }
-};
+}
