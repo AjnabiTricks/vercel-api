@@ -17,9 +17,38 @@ export default async function handler(req, res) {
   // Helper function to clean CNIC (remove dashes, spaces, etc.)
   function cleanCNIC(cnic) {
     if (!cnic) return '';
-    // Remove all non-numeric characters (dashes, spaces, etc.)
     return cnic.replace(/[^0-9]/g, '');
   }
+
+  // Common headers for POST (search) requests
+  const postHeaders = {
+    'Content-Type': 'application/json',
+    'Accept': '*/*',
+    'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Mobile Safari/537.36',
+    'Origin': 'https://rod.pulse.gop.pk',
+    'Referer': 'https://rod.pulse.gop.pk/index.html',
+    'Accept-Language': 'ur,en-US;q=0.9,en;q=0.8,ps;q=0.7',
+    'sec-ch-ua': '"Chromium";v="152", "Not?A_Brand";v="24", "Google Chrome";v="152"',
+    'sec-ch-ua-mobile': '?1',
+    'sec-ch-ua-platform': '"Android"',
+    'Sec-Fetch-Site': 'same-origin',
+    'Sec-Fetch-Mode': 'cors',
+    'Sec-Fetch-Dest': 'empty',
+  };
+
+  // Common headers for GET (detail) requests
+  const getHeaders = {
+    'Accept': '*/*',
+    'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Mobile Safari/537.36',
+    'Origin': 'https://rod.pulse.gop.pk',
+    'Accept-Language': 'ur,en-US;q=0.9,en;q=0.8,ps;q=0.7',
+    'sec-ch-ua': '"Chromium";v="152", "Not?A_Brand";v="24", "Google Chrome";v="152"',
+    'sec-ch-ua-mobile': '?1',
+    'sec-ch-ua-platform': '"Android"',
+    'Sec-Fetch-Site': 'same-origin',
+    'Sec-Fetch-Mode': 'cors',
+    'Sec-Fetch-Dest': 'empty',
+  };
 
   // Handle GET request - Search by CNIC OR Registry Number
   if (req.method === 'GET') {
@@ -27,9 +56,8 @@ export default async function handler(req, res) {
     const registryNumber = req.query.registry || req.query.reg || req.query.rn || req.query.registryNumber;
     const registryId = req.query.I || req.query.id;
 
-    // CASE 1: Search by CNIC (All formats supported)
+    // CASE 1: Search by CNIC (ALL districts & tehsils)
     if (cnic) {
-      // Clean the CNIC - remove dashes, spaces, etc.
       const cleanedCnic = cleanCNIC(cnic);
       
       if (cleanedCnic.length < 13) {
@@ -45,27 +73,20 @@ export default async function handler(req, res) {
         });
       }
 
-      console.log(`🔍 Searching CNIC: ${cnic} (Cleaned: ${cleanedCnic})`);
+      console.log(`🔍 Searching CNIC (ALL districts/tehsils): ${cnic} (Cleaned: ${cleanedCnic})`);
       
       try {
-        // Step 1: Search by CNIC
+        // Step 1: Search by CNIC with NO filters (all districts/tehsils)
         const searchResponse = await fetch('https://rod.pulse.gop.pk/api/elasticsearch/registries/search', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36',
-            'Accept-Language': 'ur,en-US;q=0.9,en;q=0.8,ps;q=0.7',
-            'Origin': 'https://rod.pulse.gop.pk',
-            'Referer': 'https://rod.pulse.gop.pk/index.html',
-          },
+          headers: postHeaders,
           body: JSON.stringify({
-            tehsilId: 99,
-            districtTehsilIds: null,
+            tehsilId: null,           // ← REMOVED filter
+            districtTehsilIds: null,  // ← REMOVED filter
             partiesName: null,
             partiesCnic: cleanedCnic,
             registeredNumber: null,
-            registryYear: null,
+            registryYear: null,       // ← REMOVED filter
             page: 1,
             itemsPerPage: 100
           }),
@@ -80,7 +101,7 @@ export default async function handler(req, res) {
         if (!searchData.results || searchData.results.length === 0) {
           return res.status(200).json({
             success: true,
-            message: 'No records found for this CNIC',
+            message: 'No records found for this CNIC in any district/tehsil',
             total: 0,
             registries: [],
             cnic: cnic,
@@ -104,11 +125,8 @@ export default async function handler(req, res) {
             const detailResponse = await fetch(`https://rod.pulse.gop.pk/api/elasticsearch/registry/${registryIdNum}`, {
               method: 'GET',
               headers: {
-                'Accept': 'application/json',
-                'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36',
-                'Accept-Language': 'ur,en-US;q=0.9,en;q=0.8,ps;q=0.7',
-                'Origin': 'https://rod.pulse.gop.pk',
-                'Referer': `https://rod.pulse.gop.pk/details_page.html?I=${registryIdNum}`,
+                ...getHeaders,
+                'Referer': `https://rod.pulse.gop.pk/details_page.html?I=${registryIdNum}`
               },
             });
 
@@ -122,6 +140,7 @@ export default async function handler(req, res) {
                 registryDate: record.RegistryDate,
                 mauzaName: record.MauzaName,
                 tehsil: record.Tehsil,
+                district: record.District || fullDetails.District || '',
                 registryType: fullDetails.RegistryType || '',
                 propertyNumber: fullDetails.PropertyNumber || '',
                 area: fullDetails.Area || '',
@@ -149,6 +168,7 @@ export default async function handler(req, res) {
                 registryDate: record.RegistryDate,
                 mauzaName: record.MauzaName,
                 tehsil: record.Tehsil,
+                district: record.District || '',
                 parties: [],
                 fullDetails: null,
                 error: 'Details not available'
@@ -161,6 +181,7 @@ export default async function handler(req, res) {
               registryDate: record.RegistryDate,
               mauzaName: record.MauzaName,
               tehsil: record.Tehsil,
+              district: record.District || '',
               parties: [],
               fullDetails: null,
               error: error.message
@@ -168,11 +189,11 @@ export default async function handler(req, res) {
           }
         }
 
-        // Return with credit
         return res.status(200).json({
           success: true,
           cnic: cnic,
           cleanedCnic: cleanedCnic,
+          searchScope: 'ALL_DISTRICTS_ALL_TEHSILS',
           totalCount: searchData.totalCount || registries.length,
           totalRetrieved: registries.length,
           registries: registries,
@@ -197,32 +218,47 @@ export default async function handler(req, res) {
       }
     }
 
-    // CASE 2: Search by Registry Number (Only, no separate API)
+    // CASE 2: Search by Registry Number
     if (registryNumber || registryId) {
       const searchTerm = registryNumber || registryId;
       console.log(`🔍 Searching Registry: ${searchTerm}`);
       
       try {
-        // Try to search by registry number via the search API first
+        // Try direct registry endpoint first
+        const response = await fetch(`https://rod.pulse.gop.pk/api/elasticsearch/registry/${searchTerm}`, {
+          method: 'GET',
+          headers: {
+            ...getHeaders,
+            'Referer': `https://rod.pulse.gop.pk/details_page.html?I=${searchTerm}`
+          },
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          return res.status(200).json({
+            success: true,
+            registryNumber: searchTerm,
+            data: data,
+            credit: {
+              developer: '@AZ_Trickcs',
+              channel: 'https://t.me/AZ_Tricks'
+            }
+          });
+        }
+
+        // If direct fails, try search API (also no filters)
         const searchResponse = await fetch('https://rod.pulse.gop.pk/api/elasticsearch/registries/search', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36',
-            'Accept-Language': 'ur,en-US;q=0.9,en;q=0.8,ps;q=0.7',
-            'Origin': 'https://rod.pulse.gop.pk',
-            'Referer': 'https://rod.pulse.gop.pk/index.html',
-          },
+          headers: postHeaders,
           body: JSON.stringify({
-            tehsilId: 99,
+            tehsilId: null,
             districtTehsilIds: null,
             partiesName: null,
             partiesCnic: null,
             registeredNumber: searchTerm,
             registryYear: null,
             page: 1,
-            itemsPerPage: 1
+            itemsPerPage: 5
           }),
         });
 
@@ -235,11 +271,8 @@ export default async function handler(req, res) {
             const detailResponse = await fetch(`https://rod.pulse.gop.pk/api/elasticsearch/registry/${registryIdNum}`, {
               method: 'GET',
               headers: {
-                'Accept': 'application/json',
-                'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36',
-                'Accept-Language': 'ur,en-US;q=0.9,en;q=0.8,ps;q=0.7',
-                'Origin': 'https://rod.pulse.gop.pk',
-                'Referer': `https://rod.pulse.gop.pk/details_page.html?I=${registryIdNum}`,
+                ...getHeaders,
+                'Referer': `https://rod.pulse.gop.pk/details_page.html?I=${registryIdNum}`
               },
             });
 
@@ -258,32 +291,7 @@ export default async function handler(req, res) {
           }
         }
 
-        // If search fails, try direct registry endpoint
-        const response = await fetch(`https://rod.pulse.gop.pk/api/elasticsearch/registry/${searchTerm}`, {
-          method: 'GET',
-          headers: {
-            'Accept': 'application/json',
-            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36',
-            'Accept-Language': 'ur,en-US;q=0.9,en;q=0.8,ps;q=0.7',
-            'Origin': 'https://rod.pulse.gop.pk',
-            'Referer': `https://rod.pulse.gop.pk/details_page.html?I=${searchTerm}`,
-          },
-        });
-
-        if (!response.ok) {
-          throw new Error(`API error: ${response.status}`);
-        }
-
-        const data = await response.json();
-        return res.status(200).json({
-          success: true,
-          registryNumber: searchTerm,
-          data: data,
-          credit: {
-            developer: '@AZ_Trickcs',
-            channel: 'https://t.me/AZ_Tricks'
-          }
-        });
+        throw new Error('Registry not found');
         
       } catch (error) {
         console.error('❌ Error:', error);
@@ -349,4 +357,4 @@ export default async function handler(req, res) {
       channel: 'https://t.me/AZ_Tricks'
     }
   });
-                  }
+          }
